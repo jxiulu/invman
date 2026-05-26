@@ -1,33 +1,23 @@
 mod invoice;
 mod toml_frontend;
-mod render;
+mod codegen;
 mod saves;
 
 use std::path::Path;
-use render::RenderSettings;
+use codegen::RenderSettings;
 
-fn first_line(s: &str) -> &str {
-    s.lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
+fn first_word_of_name(s: &str) -> String {
+    s.split_whitespace()
+        .next()
+        .map(|w| w.trim_matches(|c: char| !c.is_alphanumeric()))
         .unwrap_or("")
-}
-
-fn sanitize(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' {
-                c.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect()
+        .to_ascii_lowercase()
 }
 
 fn output_stem(invoice: &invoice::Invoice) -> String {
-    let from = sanitize(first_line(invoice.from()));
-    let to   = sanitize(first_line(invoice.to()));
+    let from = first_word_of_name(invoice.from());
+    let to   = first_word_of_name(invoice.to());
+
     let date = invoice.date();
     let date_str = format!("{:02}{:02}{:02}",
         date.year() % 100,
@@ -35,7 +25,7 @@ fn output_stem(invoice: &invoice::Invoice) -> String {
         date.day(),
     );
 
-    let ver_str = if *invoice.ver() > 1 {
+    let ver = if *invoice.ver() > 1 {
         format!("_v{}", invoice.ver())
     } else {
         String::new()
@@ -43,7 +33,6 @@ fn output_stem(invoice: &invoice::Invoice) -> String {
 
     format!("{from}_{to}_invoice{num}{ver}_{date}",
         num  = invoice.num(),
-        ver  = ver_str,
         date = date_str,
     )
 }
@@ -60,7 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let toml_str = std::fs::read_to_string(toml_path)?;
     let invoice  = toml_frontend::parse_invoice(&toml_str)?;
-    let html     = render::render_invoice(&invoice, &RenderSettings::default());
+    let html     = codegen::render_invoice(&invoice, &RenderSettings::default());
 
     let stem      = output_stem(&invoice);
     let html_path = out_dir.join(format!("{stem}.html"));

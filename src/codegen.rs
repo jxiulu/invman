@@ -16,7 +16,7 @@ impl Default for RenderSettings {
     }
 }
 
-fn symbol(denom: &Denomination) -> &'static str {
+fn denom_symbol(denom: &Denomination) -> &'static str {
     match denom {
         Denomination::JPY => "¥",
         Denomination::USD => "$",
@@ -78,7 +78,7 @@ td {{ padding: 0.4em 0; word-break: break-word; }}
 }
 
 pub fn render_invoice(invoice: &Invoice, settings: &RenderSettings) -> String {
-    let sym = symbol(invoice.denom());
+    let sym = denom_symbol(invoice.denom());
     let date = invoice.date();
     let date_str = format!("{}/{}/{}", date.year(), date.month() as u8, date.day());
 
