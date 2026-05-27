@@ -2,7 +2,7 @@ use std::error::Error;
 
 use serde::Deserialize;
 use time::Date;
-use crate::invoice::{Denomination, Invoice, InvoiceBuilder};
+use crate::invoice::{Denomination, Invoice, Item};
 
 #[derive(Deserialize)]
 struct TomlItem {
@@ -67,7 +67,7 @@ pub fn parse_invoice(toml: &str) -> Result<Invoice, Box<dyn std::error::Error>> 
             time::OffsetDateTime::now_utc().date()
         });
 
-    let mut builder = InvoiceBuilder::new()
+    let builder = Invoice::builder()
         .new_uuid()
         .num(raw.num)
         .date(date)
@@ -76,30 +76,37 @@ pub fn parse_invoice(toml: &str) -> Result<Invoice, Box<dyn std::error::Error>> 
         .to(raw.to)
         .from(raw.from);
 
-    for item in raw.items {
-        let quant = item.quant
-            .as_deref()
-            .map(parse_num)
-            .unwrap_or(1);
+    let items: Vec<Item> = raw.items
+        .iter()
+        .map(|i| {
+            let quant = i.quant
+                .as_deref()
+                .map(|n| parse_num(n))
+                .unwrap_or(1);
 
-        let unit_price = match (item.unit_price.as_deref(), item.total.as_deref()) {
-            (Some(unit_price), _) => parse_num(unit_price),
-            // rate = total / quant; loses remainder if not evenly divisible
-            (None, Some(t)) => parse_num(t) / quant,
-            (None, None) => 0,
-        };
+            let unit_price = match (i.unit_price.as_deref(), i.total.as_deref()) {
+                (Some(unit_price), _) => parse_num(unit_price),
+                // rate = total / quant; loses remainder if not evenly divisible
+                (None, Some(t)) => parse_num(t) / quant,
+                (None, None) => 0,
+            };
 
-        builder = builder.unit_item(item.desc, quant, unit_price);
-    }
+            Item::new(i.desc.clone(), quant, unit_price)
+        })
+        .collect();
 
-    for f in raw.footer {
-        builder = builder.footer(
-            f.header.unwrap_or("Notes".to_string()),
-            f.text
-        );
-    }
+    let footers: Vec<(String, String)> = raw.footer
+        .iter()
+        .map(|f| {
+            (f.header.clone().unwrap_or_else(|| "Notes".to_string()), f.text.clone())
+        })
+        .collect();
 
-    Ok(builder.build())
+    Ok(builder
+        .items(items)
+        .footer(footers)
+        .build()
+    )
 }
 
 #[cfg(test)]
@@ -185,7 +192,7 @@ mod tests {
         let inv = parse_invoice(&base("[[items]]\ndesc = \"X\"\nunit_price = \"100\"")).unwrap();
         let item = &inv.items()[0];
         assert_eq!(*item.quant(), 1);
-        assert_eq!(*item.rate(), 100);
+        assert_eq!(*item.unit_price(), 100);
     }
 
     #[test]
@@ -193,7 +200,7 @@ mod tests {
         let inv = parse_invoice(&base("[[items]]\ndesc = \"X\"\ntotal = \"150,000\"")).unwrap();
         let item = &inv.items()[0];
         assert_eq!(*item.quant(), 1);
-        assert_eq!(*item.rate(), 150000);
+        assert_eq!(*item.unit_price(), 150000);
     }
 
     #[test]
@@ -203,7 +210,7 @@ mod tests {
         )).unwrap();
         let item = &inv.items()[0];
         assert_eq!(*item.quant(), 16);
-        assert_eq!(*item.rate(), 5000);
+        assert_eq!(*item.unit_price(), 5000);
     }
 
     #[test]
@@ -213,7 +220,7 @@ mod tests {
         )).unwrap();
         let item = &inv.items()[0];
         assert_eq!(*item.quant(), 3);
-        assert_eq!(*item.rate(), 5000);
+        assert_eq!(*item.unit_price(), 5000);
     }
 
     #[test]
@@ -221,7 +228,7 @@ mod tests {
         let inv = parse_invoice(&base(
             "[[items]]\ndesc = \"X\"\nunit_price = \"200\"\ntotal = \"999\""
         )).unwrap();
-        assert_eq!(*inv.items()[0].rate(), 200);
+        assert_eq!(*inv.items()[0].unit_price(), 200);
     }
 
     #[test]
@@ -279,10 +286,10 @@ text = "よろしくお願いします。"
         let inv = parse_invoice(toml).unwrap();
 
         assert_eq!(*inv.num(), 32);
-        assert_eq!(*inv.items()[0].rate(), 150000);
+        assert_eq!(*inv.items()[0].unit_price(), 150000);
         assert_eq!(*inv.items()[0].quant(), 1);
         assert_eq!(*inv.items()[1].quant(), 16);
-        assert_eq!(*inv.items()[1].rate(), 5000);
+        assert_eq!(*inv.items()[1].unit_price(), 5000);
         assert_eq!(inv.footer()[0].0, "Notes");
     }
 }

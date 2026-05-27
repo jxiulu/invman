@@ -86,20 +86,20 @@ pub fn render_invoice(invoice: &Invoice, settings: &RenderSettings) -> String {
     let mut grand_total: u32 = 0;
 
     for item in invoice.items() {
-        let total = item.quant() * item.rate();
+        let total = item.quant() * item.unit_price();
         grand_total += total;
 
         item_rows.push_str(&format!(
             "<tr>\
                 <td>{desc}</td>\
                 <td class=\"r\">{quant}</td>\
-                <td class=\"r\">{sym}{rate}</td>\
+                <td class=\"r\">{sym}{unit_price}</td>\
                 <td class=\"r\">{sym}{total}</td>\
             </tr>\n",
             desc  = escape(item.desc()),
             quant = item.quant(),
             sym   = sym,
-            rate  = fmt_amount(*item.rate()),
+            unit_price  = fmt_amount(*item.unit_price()),
             total = fmt_amount(total),
         ));
     }
