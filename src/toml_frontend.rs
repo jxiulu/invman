@@ -1,5 +1,4 @@
-use std::error::Error;
-
+use anyhow::Context;
 use serde::Deserialize;
 use time::Date;
 use crate::invoice::{Denomination, Invoice, Item};
@@ -8,7 +7,7 @@ use crate::invoice::{Denomination, Invoice, Item};
 struct TomlItem {
     desc: String,
     #[serde(default)]
-    quant: Option<String>,
+    quant: Option<u32>,
     #[serde(default)]
     unit_price: Option<String>,
     #[serde(default)]
@@ -46,18 +45,25 @@ fn parse_num(s: &str) -> u32 {
     s.replace(',', "").trim().parse().unwrap_or(0)
 }
 
-fn parse_date(s: &str) -> Result<Date, Box<dyn Error>> {
+fn parse_date(s: &str) -> Result<Date, anyhow::Error> {
     let parts: Vec<&str> = s.splitn(3, '.').collect();
     if parts.len() != 3 {
-        return Err("date must be YY.M.D".into());
+        anyhow::bail!("date must be YY.M.D");
     }
-    let year: i32 = parts[0].trim().parse::<i32>()? + 2000;
-    let month: u8 = parts[1].trim().parse()?;
-    let day: u8 = parts[2].trim().parse()?;
-    Ok(Date::from_calendar_date(year, time::Month::try_from(month)?, day)?)
+    let year: i32 = parts[0].trim()
+        .parse::<i32>()? + 2000;
+    let month: u8 = parts[1].trim()
+        .parse()?;
+    let day: u8 = parts[2].trim()
+        .parse()?;
+
+    Date::from_calendar_date(
+        year, time::Month::try_from(month)?, day
+    )
+        .context("Failed to create date from valid TOML date values")
 }
 
-pub fn parse_invoice(toml: &str) -> Result<Invoice, Box<dyn std::error::Error>> {
+pub fn parse_invoice(toml: &str) -> Result<Invoice, anyhow::Error> {
     let raw: TomlInvoice = toml::from_str(toml)?;
 
     let date = raw.date
@@ -79,12 +85,11 @@ pub fn parse_invoice(toml: &str) -> Result<Invoice, Box<dyn std::error::Error>> 
     let items: Vec<Item> = raw.items
         .iter()
         .map(|i| {
-            let quant = i.quant
-                .as_deref()
-                .map(|n| parse_num(n))
-                .unwrap_or(1);
+            let quant = i.quant.unwrap_or(1);
 
-            let unit_price = match (i.unit_price.as_deref(), i.total.as_deref()) {
+            let unit_price = match 
+                (i.unit_price.as_deref(), i.total.as_deref())
+            {
                 (Some(unit_price), _) => parse_num(unit_price),
                 // rate = total / quant; loses remainder if not evenly divisible
                 (None, Some(t)) => parse_num(t) / quant,

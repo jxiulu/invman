@@ -4,9 +4,10 @@ use std::{
     path::PathBuf,
 };
 use serde::de::DeserializeOwned;
+use derive_more::Display;
 use crate::{
     invoice::*,
-    saves::savables::*,
+    saves::{self, savables::*},
 };
 use uuid::Uuid;
 
@@ -86,8 +87,7 @@ impl Storage {
 
     pub fn save_footer(
         &mut self, field: Footer
-    ) -> Result<(), Box<dyn std::error::Error>> {
-
+    ) -> Result<(), anyhow::Error> {
         let uuid = *field.uuid();
         let path = self.db
             .join("fields")
@@ -103,8 +103,7 @@ impl Storage {
 
     pub fn save_party(
         &mut self, party: Party
-    ) -> Result<(), Box<dyn std::error::Error>> {
-
+    ) -> Result<(), anyhow::Error> {
         let uuid = *party.uuid();
         let path = self.db
             .join("parties")
@@ -120,7 +119,7 @@ impl Storage {
 
     pub fn save_invoice(
         &mut self, invoice: Invoice
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), anyhow::Error> {
 
         let uuid = *invoice.uuid();
         let path = self.db

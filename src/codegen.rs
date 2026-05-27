@@ -99,6 +99,7 @@ pub fn render_invoice(invoice: &Invoice, settings: &RenderSettings) -> String {
             desc  = escape(item.desc()),
             quant = item.quant(),
             sym   = sym,
+
             unit_price  = fmt_amount(*item.unit_price()),
             total = fmt_amount(total),
         ));
