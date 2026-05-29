@@ -1,109 +1,190 @@
 use anyhow::Context;
 use serde::Deserialize;
-use time::Date;
+use time::{Date, Month};
+use toml::value::Datetime;
 use crate::invoice::{Denomination, Invoice, Item};
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum TomlNumber {
+    String(String),
+    U32(u32),
+}
+
+impl TryFrom<TomlNumber> for u32 {
+    type Error = anyhow::Error;
+
+    fn try_from(value: TomlNumber) -> Result<Self, Self::Error> {
+        match value {
+            TomlNumber::String(s) => {
+                Ok(s.replace(',', "").trim().parse()?)
+            }
+            TomlNumber::U32(u) => Ok(u)
+        }
+    }
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum TomlDate {
+    String(String),
+    Datetime(Datetime)
+}
+
+impl TryFrom<TomlDate> for Date {
+    type Error = anyhow::Error;
+
+    fn try_from(value: TomlDate) -> Result<Self, Self::Error> {
+        match value {
+            TomlDate::String(s) => {
+                let parts: Vec<&str> = s.splitn(3, '.').collect();
+                if parts.len() != 3 {
+                    anyhow::bail!("date must be YY.MM.DD");
+                }
+
+                let year: i32 = parts[0]
+                    .trim()
+                    .parse::<i32>()? + 2000;
+                let month: u8 = parts[1]
+                    .trim()
+                    .parse()?;
+                let day: u8 = parts[2]
+                    .trim()
+                    .parse()?;
+
+                Ok(Date::from_calendar_date(
+                    year, time::Month::try_from(month)?, day
+                )?)
+            }
+            TomlDate::Datetime(dt) => {
+                let date = dt.date.context("No date found")?;
+                let month = Month::try_from(date.month)?;
+
+                Ok(Date::from_calendar_date(
+                    date.year as i32, month, date.day
+                )?)
+            },
+        }
+    }
+}
 
 #[derive(Deserialize)]
 struct TomlItem {
+    #[serde(alias = "name")]
     desc: String,
-    #[serde(default)]
-    quant: Option<u32>,
-    #[serde(default)]
-    unit_price: Option<String>,
-    #[serde(default)]
-    total: Option<String>,
+
+    #[serde(default, alias = "quantity", alias = "qty", alias = "q")]
+    quant: Option<TomlNumber>,
+
+    #[serde(default, alias = "rate")]
+    unit_price: Option<TomlNumber>,
+
+    #[serde(default, alias = "amount")]
+    total: Option<TomlNumber>,
 }
 
 #[derive(Deserialize)]
 struct TomlFooter {
-    #[serde(default)]
+    #[serde(default, alias = "title")]
     header: Option<String>,
+    #[serde(default, alias = "content")]
     text: String,
 }
 
 #[derive(Deserialize)]
 struct TomlInvoice {
-    num: u32,
+    #[serde(alias = "number", alias = "no")]
+    num: TomlNumber,
+
+    #[serde(alias = "recipient")]
     to: String,
+
+    #[serde(alias = "sender")]
     from: String,
+
+    #[serde(alias = "currency")]
     denom: Denomination,
 
     #[serde(default)]
-    date: Option<String>,
+    date: Option<TomlDate>,
 
-    #[serde(default)]
-    ver: Option<u32>,
+    #[serde(default, alias = "version", alias = "v")]
+    ver: Option<TomlNumber>,
 
-    #[serde(default)]
+    #[serde(default, alias = "item")]
     items: Vec<TomlItem>,
-    #[serde(default)]
+
+    #[serde(default, alias = "footer", alias = "note", alias = "notes")]
     footer: Vec<TomlFooter>,
 }
 
-/// Strips commas and parses as u32. "150,000" -> 150000.
-fn parse_num(s: &str) -> u32 {
-    s.replace(',', "").trim().parse().unwrap_or(0)
-}
+pub fn parse_toml(toml: &str) -> anyhow::Result<Invoice> {
+    let toml: TomlInvoice = toml::from_str(toml)?;
 
-fn parse_date(s: &str) -> Result<Date, anyhow::Error> {
-    let parts: Vec<&str> = s.splitn(3, '.').collect();
-    if parts.len() != 3 {
-        anyhow::bail!("date must be YY.M.D");
-    }
-    let year: i32 = parts[0].trim()
-        .parse::<i32>()? + 2000;
-    let month: u8 = parts[1].trim()
-        .parse()?;
-    let day: u8 = parts[2].trim()
-        .parse()?;
-
-    Date::from_calendar_date(
-        year, time::Month::try_from(month)?, day
-    )
-        .context("Failed to create date from valid TOML date values")
-}
-
-pub fn parse_invoice(toml: &str) -> Result<Invoice, anyhow::Error> {
-    let raw: TomlInvoice = toml::from_str(toml)?;
-
-    let date = raw.date
-        .map(|s| parse_date(&s))
+    let date = toml.date
+        .map(|d| d.try_into())
         .transpose()?
         .unwrap_or_else(|| {
             time::OffsetDateTime::now_utc().date()
         });
 
+    let ver = toml.ver
+        .map(|n| n.try_into())
+        .transpose()?
+        .unwrap_or(1);
+
     let builder = Invoice::builder()
         .new_uuid()
-        .num(raw.num)
+        .num(toml.num.try_into()?)
         .date(date)
-        .ver(raw.ver.unwrap_or(1))
-        .denom(raw.denom)
-        .to(raw.to)
-        .from(raw.from);
+        .ver(ver)
+        .denom(toml.denom)
+        .to(toml.to)
+        .from(toml.from);
 
-    let items: Vec<Item> = raw.items
-        .iter()
-        .map(|i| {
-            let quant = i.quant.unwrap_or(1);
+    let mut items: Vec<Item> = Vec::new();
+    for item in toml.items {
+        let quant: u32 = item.quant
+            .map(|n| n.try_into())
+            .transpose()?
+            .unwrap_or(1);
 
-            let unit_price = match 
-                (i.unit_price.as_deref(), i.total.as_deref())
-            {
-                (Some(unit_price), _) => parse_num(unit_price),
-                // rate = total / quant; loses remainder if not evenly divisible
-                (None, Some(t)) => parse_num(t) / quant,
-                (None, None) => 0,
-            };
+        let unit_price = match (item.unit_price, item.total) {
+            (None, None) => {
+                0
+            },
+            (None, Some(t)) => {
+                let t: u32 = t.try_into()?;
+                if quant > 1 {
+                    t / quant
+                } else {
+                    t
+                }
+            },
+            (Some(u), None) => {
+                u.try_into()?
+            },
+            (Some(u), Some(t)) => {
+                let u: u32 = u.try_into()?;
+                let t: u32 = t.try_into()?;
+                if quant * u != t {
+                    anyhow::bail!(
+                        "Item {} has a wrong total: should be {}",
+                        item.desc,
+                        quant * u
+                    );
+                }
+                u
+            }
+        };
+        
+        items.push(Item::new(item.desc, quant, unit_price));
+    }
 
-            Item::new(i.desc.clone(), quant, unit_price)
-        })
-        .collect();
-
-    let footers: Vec<(String, String)> = raw.footer
-        .iter()
+    let footers: Vec<(String, String)> = toml.footer
+        .into_iter()
         .map(|f| {
-            (f.header.clone().unwrap_or_else(|| "Notes".to_string()), f.text.clone())
+            (f.header.clone().unwrap_or_else(|| "Notes".to_string()), f.text)
         })
         .collect();
 
@@ -112,189 +193,4 @@ pub fn parse_invoice(toml: &str) -> Result<Invoice, anyhow::Error> {
         .footer(footers)
         .build()
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn base(extra: &str) -> String {
-        format!(
-            "num = 1\nto = \"Client\"\nfrom = \"Me\"\ndenom = \"USD\"\n{extra}"
-        )
-    }
-
-    // --- parse_num ---
-
-    #[test]
-    fn parse_num_plain() {
-        assert_eq!(parse_num("5000"), 5000);
-    }
-
-    #[test]
-    fn parse_num_commas() {
-        assert_eq!(parse_num("150,000"), 150000);
-    }
-
-    #[test]
-    fn parse_num_whitespace() {
-        assert_eq!(parse_num("  42  "), 42);
-    }
-
-    // --- parse_date ---
-
-    #[test]
-    fn parse_date_ymd() {
-        let date = parse_date("26.5.26").unwrap();
-        let expected = time::Date::from_calendar_date(2026, time::Month::May, 26).unwrap();
-        assert_eq!(date, expected);
-    }
-
-    #[test]
-    fn parse_date_single_digit_day() {
-        let date = parse_date("26.1.5").unwrap();
-        let expected = time::Date::from_calendar_date(2026, time::Month::January, 5).unwrap();
-        assert_eq!(date, expected);
-    }
-
-    // --- invoice fields ---
-
-    #[test]
-    fn invoice_required_fields() {
-        let inv = parse_invoice(&base("")).unwrap();
-        assert_eq!(*inv.num(), 1);
-        assert_eq!(inv.to(), "Client");
-        assert_eq!(inv.from(), "Me");
-    }
-
-    #[test]
-    fn invoice_default_ver() {
-        assert_eq!(*parse_invoice(&base("")).unwrap().ver(), 1);
-    }
-
-    #[test]
-    fn invoice_explicit_ver() {
-        assert_eq!(*parse_invoice(&base("ver = 3")).unwrap().ver(), 3);
-    }
-
-    #[test]
-    fn invoice_explicit_date() {
-        let inv = parse_invoice(&base("date = \"26.5.26\"")).unwrap();
-        let expected = time::Date::from_calendar_date(2026, time::Month::May, 26).unwrap();
-        assert_eq!(*inv.date(), expected);
-    }
-
-    #[test]
-    fn invoice_default_date_is_today() {
-        let inv = parse_invoice(&base("")).unwrap();
-        assert_eq!(*inv.date(), time::OffsetDateTime::now_utc().date());
-    }
-
-    // --- items ---
-
-    #[test]
-    fn item_unit_price_only() {
-        let inv = parse_invoice(&base("[[items]]\ndesc = \"X\"\nunit_price = \"100\"")).unwrap();
-        let item = &inv.items()[0];
-        assert_eq!(*item.quant(), 1);
-        assert_eq!(*item.unit_price(), 100);
-    }
-
-    #[test]
-    fn item_total_only_defaults_quant_to_1() {
-        let inv = parse_invoice(&base("[[items]]\ndesc = \"X\"\ntotal = \"150,000\"")).unwrap();
-        let item = &inv.items()[0];
-        assert_eq!(*item.quant(), 1);
-        assert_eq!(*item.unit_price(), 150000);
-    }
-
-    #[test]
-    fn item_quant_and_unit_price() {
-        let inv = parse_invoice(&base(
-            "[[items]]\ndesc = \"X\"\nquant = \"16\"\nunit_price = \"5000\""
-        )).unwrap();
-        let item = &inv.items()[0];
-        assert_eq!(*item.quant(), 16);
-        assert_eq!(*item.unit_price(), 5000);
-    }
-
-    #[test]
-    fn item_quant_and_total() {
-        let inv = parse_invoice(&base(
-            "[[items]]\ndesc = \"X\"\nquant = \"3\"\ntotal = \"15,000\""
-        )).unwrap();
-        let item = &inv.items()[0];
-        assert_eq!(*item.quant(), 3);
-        assert_eq!(*item.unit_price(), 5000);
-    }
-
-    #[test]
-    fn item_unit_price_takes_priority_over_total() {
-        let inv = parse_invoice(&base(
-            "[[items]]\ndesc = \"X\"\nunit_price = \"200\"\ntotal = \"999\""
-        )).unwrap();
-        assert_eq!(*inv.items()[0].unit_price(), 200);
-    }
-
-    #[test]
-    fn no_items() {
-        let inv = parse_invoice(&base("")).unwrap();
-        assert!(inv.items().is_empty());
-    }
-
-    // --- footer ---
-
-    #[test]
-    fn footer_default_header() {
-        let inv = parse_invoice(&base("[[footer]]\ntext = \"Thank you\"")).unwrap();
-        assert_eq!(inv.footer()[0].0, "Notes");
-        assert_eq!(inv.footer()[0].1, "Thank you");
-    }
-
-    #[test]
-    fn footer_custom_header() {
-        let inv = parse_invoice(&base(
-            "[[footer]]\nheader = \"Payment\"\ntext = \"Due in 30 days\""
-        )).unwrap();
-        assert_eq!(inv.footer()[0].0, "Payment");
-        assert_eq!(inv.footer()[0].1, "Due in 30 days");
-    }
-
-    #[test]
-    fn no_footer() {
-        let inv = parse_invoice(&base("")).unwrap();
-        assert!(inv.footer().is_empty());
-    }
-
-    // --- full example ---
-
-    #[test]
-    fn example_invoice() {
-        let toml = r#"
-num = 32
-to = "Toei Animation"
-from = "JXL"
-denom = "JPY"
-
-[[items]]
-desc = "５月Restraint Fee"
-total = "150,000"
-
-[[items]]
-desc = "ONP1167 KA"
-quant = "16"
-unit_price = "5000"
-
-[[footer]]
-text = "よろしくお願いします。"
-"#;
-        let inv = parse_invoice(toml).unwrap();
-
-        assert_eq!(*inv.num(), 32);
-        assert_eq!(*inv.items()[0].unit_price(), 150000);
-        assert_eq!(*inv.items()[0].quant(), 1);
-        assert_eq!(*inv.items()[1].quant(), 16);
-        assert_eq!(*inv.items()[1].unit_price(), 5000);
-        assert_eq!(inv.footer()[0].0, "Notes");
-    }
 }

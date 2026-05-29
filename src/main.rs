@@ -1,7 +1,7 @@
 mod invoice;
 mod toml_frontend;
 mod codegen;
-mod saves;
+mod saving;
 
 use std::path::Path;
 use codegen::RenderSettings;
@@ -53,7 +53,7 @@ fn main() -> Result<(), anyhow::Error> {
         .unwrap_or(Path::new("."));
 
     let toml_str = std::fs::read_to_string(toml_path)?;
-    let invoice  = toml_frontend::parse_invoice(&toml_str)?;
+    let invoice  = toml_frontend::parse_toml(&toml_str)?;
     let html     = codegen::render_invoice(
         &invoice,
         &RenderSettings::default()

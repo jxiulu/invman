@@ -4,6 +4,8 @@ use serde::{Serialize, Deserialize};
 use time::Date;
 use bon::Builder;
 
+use crate::saving::Savable;
+
 #[derive(Getters, Serialize, Deserialize)]
 #[getset(get = "pub")]
 pub struct Item {
@@ -54,6 +56,9 @@ impl<S: State> InvoiceBuilder<S> {
     {
         self.uuid(Uuid::now_v7())
     }
+}
+
+impl Savable for Invoice {
 }
 
 #[derive(Deserialize, Serialize)]
