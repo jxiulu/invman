@@ -1,9 +1,16 @@
 use getset::Getters;
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Serialize, de::DeserializeOwned
+};
 use uuid::Uuid;
 
 pub trait Savable: Serialize + for<'de> Deserialize<'de> {
 }
+
+impl<T> Savable for T
+where 
+    T: Serialize + DeserializeOwned
+{}
 
 // savable
 #[derive(Getters, Serialize, Deserialize)]
@@ -17,16 +24,10 @@ pub struct Party {
     pub content: String,
 }
 
-impl Savable for Party {
-}
-
 #[derive(Getters, Serialize, Deserialize)]
 #[getset(get = "pub")]
 pub struct Footer {
     uuid: Uuid,
     header: String,
     text: String,
-}
-
-impl Savable for Footer {
 }

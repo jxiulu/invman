@@ -4,25 +4,34 @@ use serde::{Serialize, Deserialize};
 use time::Date;
 use bon::Builder;
 
-use crate::saving::Savable;
+#[derive(Serialize, Deserialize)]
+pub enum PricingMethod {
+    Totaled(u32),
+    UnitPrice(u32),
+}
 
 #[derive(Getters, Serialize, Deserialize)]
 #[getset(get = "pub")]
 pub struct Item {
     desc: String,
     quant: u32,
-
-    /// currency-agnostic. invoice determines the currency.
-    /// only the unit price is held
-    unit_price: u32,
+    price: PricingMethod,
 }
 
 impl Item {
-    pub fn new(desc: String, quant: u32, unit_price: u32) -> Self {
+    pub fn unit(desc: String, quant: u32, unit_price: u32) -> Self {
         Self {
             desc,
             quant,
-            unit_price
+            price: PricingMethod::UnitPrice(unit_price)
+        }
+    }
+
+    pub fn total(desc: String, quant: u32, total: u32) -> Self {
+        Self {
+            desc,
+            quant,
+            price: PricingMethod::Totaled(total)
         }
     }
 }
@@ -56,9 +65,6 @@ impl<S: State> InvoiceBuilder<S> {
     {
         self.uuid(Uuid::now_v7())
     }
-}
-
-impl Savable for Invoice {
 }
 
 #[derive(Deserialize, Serialize)]

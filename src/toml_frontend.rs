@@ -17,7 +17,10 @@ impl TryFrom<TomlNumber> for u32 {
     fn try_from(value: TomlNumber) -> Result<Self, Self::Error> {
         match value {
             TomlNumber::String(s) => {
-                Ok(s.replace(',', "").trim().parse()?)
+                Ok(s.replace(',', "")
+                    .trim()
+                    .parse()?
+                )
             }
             TomlNumber::U32(u) => Ok(u)
         }
@@ -73,8 +76,11 @@ struct TomlItem {
     #[serde(alias = "name")]
     desc: String,
 
-    #[serde(default, alias = "quantity", alias = "qty", alias = "q")]
-    quant: Option<TomlNumber>,
+    #[serde(
+        default = "default_quant",
+        alias = "quantity", alias = "qty", alias = "q"
+    )]
+    quant: TomlNumber,
 
     #[serde(default, alias = "rate")]
     unit_price: Option<TomlNumber>,
@@ -83,17 +89,32 @@ struct TomlItem {
     total: Option<TomlNumber>,
 }
 
+fn default_quant() -> TomlNumber {
+    TomlNumber::U32(1)
+}
+
 #[derive(Deserialize)]
 struct TomlFooter {
-    #[serde(default, alias = "title")]
-    header: Option<String>,
+    #[serde(
+        default = "default_footer_header",
+        alias = "title"
+    )]
+    header: String,
+
     #[serde(default, alias = "content")]
     text: String,
 }
 
+fn default_footer_header() -> String {
+    "Notes".to_string()
+}
+
 #[derive(Deserialize)]
 struct TomlInvoice {
-    #[serde(alias = "number", alias = "no")]
+    #[serde(
+        default = "default_quant",
+        alias = "number", alias = "no"
+    )]
     num: TomlNumber,
 
     #[serde(alias = "recipient")]
@@ -108,8 +129,11 @@ struct TomlInvoice {
     #[serde(default)]
     date: Option<TomlDate>,
 
-    #[serde(default, alias = "version", alias = "v")]
-    ver: Option<TomlNumber>,
+    #[serde(
+        default = "default_quant",
+        alias = "version", alias = "v"
+    )]
+    ver: TomlNumber,
 
     #[serde(default, alias = "item")]
     items: Vec<TomlItem>,
@@ -128,10 +152,7 @@ pub fn parse_toml(toml: &str) -> anyhow::Result<Invoice> {
             time::OffsetDateTime::now_utc().date()
         });
 
-    let ver = toml.ver
-        .map(|n| n.try_into())
-        .transpose()?
-        .unwrap_or(1);
+    let ver = toml.ver.try_into()?;
 
     let builder = Invoice::builder()
         .new_uuid()
@@ -144,47 +165,32 @@ pub fn parse_toml(toml: &str) -> anyhow::Result<Invoice> {
 
     let mut items: Vec<Item> = Vec::new();
     for item in toml.items {
-        let quant: u32 = item.quant
-            .map(|n| n.try_into())
-            .transpose()?
-            .unwrap_or(1);
+        let quant: u32 = item.quant.try_into()?;
 
-        let unit_price = match (item.unit_price, item.total) {
+        let item = match 
+            (item.unit_price, item.total)
+        {
             (None, None) => {
-                0
+                Item::total(item.desc, quant, 0)
             },
             (None, Some(t)) => {
-                let t: u32 = t.try_into()?;
-                if quant > 1 {
-                    t / quant
-                } else {
-                    t
-                }
+                Item::total(item.desc, quant, t.try_into()?)
             },
             (Some(u), None) => {
-                u.try_into()?
-            },
+                Item::unit(item.desc, quant, u.try_into()?)
+            }
             (Some(u), Some(t)) => {
-                let u: u32 = u.try_into()?;
-                let t: u32 = t.try_into()?;
-                if quant * u != t {
-                    anyhow::bail!(
-                        "Item {} has a wrong total: should be {}",
-                        item.desc,
-                        quant * u
-                    );
-                }
-                u
+                anyhow::bail!("Please either unit price your item or total it.")
             }
         };
-        
-        items.push(Item::new(item.desc, quant, unit_price));
+
+        items.push(item);
     }
 
     let footers: Vec<(String, String)> = toml.footer
         .into_iter()
         .map(|f| {
-            (f.header.clone().unwrap_or_else(|| "Notes".to_string()), f.text)
+            (f.header, f.text)
         })
         .collect();
 

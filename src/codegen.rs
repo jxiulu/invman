@@ -1,4 +1,4 @@
-use crate::invoice::{Denomination, Invoice};
+use crate::invoice::{Denomination, Invoice, PricingMethod};
 
 pub struct RenderSettings {
     pub font_family: String,
@@ -64,7 +64,9 @@ h1 {{ font-size: 1.5em; margin-bottom: 0.5em; letter-spacing: 0.05em; }}
 .label {{ font-weight: bold; margin-bottom: 0.3em; }}
 table {{ width: 100%; border-collapse: collapse; margin-bottom: 1.5em; }}
 thead th {{ border-bottom: 1pt solid black; padding-bottom: 0.3em; text-align: left; }}
-td {{ padding: 0.4em 0; word-break: break-word; }}
+td {{ padding: 0.4em 0; }}
+td.desc {{ word-break: break-word; width: 55%; }}
+td.r {{ white-space: nowrap; }}
 .r {{ text-align: right; }}
 .total-row td {{ border-top: 1pt solid black; font-weight: bold; padding-top: 0.3em; }}
 .footer {{ margin-top: 2em; }}
@@ -86,22 +88,30 @@ pub fn render_invoice(invoice: &Invoice, settings: &RenderSettings) -> String {
     let mut grand_total: u32 = 0;
 
     for item in invoice.items() {
-        let total = item.quant() * item.unit_price();
+        let (unit_price_cell, total) = match item.price() {
+            PricingMethod::UnitPrice(u) => (
+                format!("{sym}{}", fmt_amount(*u)),
+                item.quant() * u,
+            ),
+            PricingMethod::Totaled(t) => (
+                "&mdash;".to_string(),
+                *t,
+            ),
+        };
         grand_total += total;
 
         item_rows.push_str(&format!(
             "<tr>\
-                <td>{desc}</td>\
+                <td class=\"desc\">{desc}</td>\
                 <td class=\"r\">{quant}</td>\
-                <td class=\"r\">{sym}{unit_price}</td>\
+                <td class=\"r\">{unit_price}</td>\
                 <td class=\"r\">{sym}{total}</td>\
             </tr>\n",
-            desc  = escape(item.desc()),
-            quant = item.quant(),
-            sym   = sym,
-
-            unit_price  = fmt_amount(*item.unit_price()),
-            total = fmt_amount(total),
+            desc       = escape(item.desc()),
+            quant      = item.quant(),
+            unit_price = unit_price_cell,
+            sym        = sym,
+            total      = fmt_amount(total),
         ));
     }
 
@@ -150,7 +160,7 @@ pub fn render_invoice(invoice: &Invoice, settings: &RenderSettings) -> String {
   <table>
     <thead>
       <tr>
-        <th>Description</th>
+        <th class="desc">Description</th>
         <th class="r">Qty</th>
         <th class="r">Unit Price</th>
         <th class="r">Total</th>
